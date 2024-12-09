@@ -13,7 +13,7 @@ import { IInstantiationService, ServicesAccessor } from '../../../../../platform
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IQuickInputService, IQuickPick, IQuickPickItem, QuickPickInput } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IAccountUsage, IAuthenticationUsageService } from '../../../../services/authentication/browser/authenticationUsageService.js';
-import { AuthenticationSessionAccount, IAuthenticationExtensionsService, IAuthenticationService, INTERNAL_AUTH_PROVIDER_PREFIX } from '../../../../services/authentication/common/authentication.js';
+import { AuthenticationSessionAccount, IAuthenticationCreateSessionOptions, IAuthenticationExtensionsService, IAuthenticationService, INTERNAL_AUTH_PROVIDER_PREFIX } from '../../../../services/authentication/common/authentication.js';
 import { IExtensionService } from '../../../../services/extensions/common/extensions.js';
 
 export class ManageAccountPreferencesForExtensionAction extends Action2 {
@@ -152,7 +152,12 @@ class ManageAccountPreferenceForExtensionActionImpl {
 		picker.sortByLabel = false;
 		disposableStore.add(picker.onDidAccept(async () => {
 			picker.hide();
-			await this._accept(extensionId, picker.selectedItems);
+			if (picker.value && picker.selectedItems.length === 0) {
+				await this._accept(extensionId, picker.selectedItems, picker.value);
+			}
+			else {
+				await this._accept(extensionId, picker.selectedItems);
+			}
 		}));
 		return picker;
 	}
@@ -181,7 +186,7 @@ class ManageAccountPreferenceForExtensionActionImpl {
 		return Event.filter(picker.onDidTriggerButton, (e) => e === this._quickInputService.backButton)(() => this.run());
 	}
 
-	private async _accept(extensionId: string, selectedItems: ReadonlyArray<AccountPreferenceQuickPickItem>) {
+	private async _accept(extensionId: string, selectedItems: ReadonlyArray<AccountPreferenceQuickPickItem>, value?: string) {
 		for (const item of selectedItems) {
 			let account: AuthenticationSessionAccount;
 			if (!item.account) {
@@ -202,6 +207,29 @@ class ManageAccountPreferenceForExtensionActionImpl {
 				continue;
 			}
 			this._authenticationExtensionsService.updateAccountPreference(extensionId, providerId, account);
+		}
+		if (value) {
+			let account: AuthenticationSessionAccount;
+			const accountList = await this._authenticationService.getAccounts(extensionId);
+			const accountExists = accountList.find(acc => acc.label === value);
+			if (accountExists) {
+				account = accountExists;
+			} else {
+				try {
+					const newAccountPickerItem = selectedItems.find(item => item.label === localize('use new account', "Use a new account..."));
+					if (!newAccountPickerItem) {
+						throw new Error('New account picker item not found');
+					}
+					const options: IAuthenticationCreateSessionOptions = {
+						activateImmediate: true,
+						account: { label: value, id: value }
+					};
+					const session = await this._authenticationService.createSession(newAccountPickerItem.providerId, newAccountPickerItem.scopes ?? [], options);
+					account = session.account;
+				} catch (e) {
+					this._logService.error(e);
+				}
+			}
 		}
 	}
 }
